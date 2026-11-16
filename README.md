@@ -4,6 +4,16 @@ A local workspace for Markdown notes, knowledge graphs, and AI agents. Keep your
 
 Mastermind indexes and retrieves locally. It requires no model API key, embedding service, or separate database.
 
+## Meet Mastermind
+
+[![Watch the Mastermind film — Think clearly. Build with context.](docs/media/mastermind-poster.png)](https://github.com/xcl991/Mastermind/blob/main/docs/media/mastermind-film-1080p.mp4)
+
+**[Watch the 48-second film](https://github.com/xcl991/Mastermind/blob/main/docs/media/mastermind-film-1080p.mp4)** · [Download MP4](https://raw.githubusercontent.com/xcl991/Mastermind/main/docs/media/mastermind-film-1080p.mp4) · Full English · 1080p
+
+From connected notes and knowledge graphs to focused evidence for compatible AI agents, see how Mastermind turns local knowledge into useful context.
+
+Music: “Cipher” by Kevin MacLeod (incompetech.com), [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Edited for this film. [Full media credits](docs/media/CREDITS.md).
+
 ## Quick start
 
 Install Node.js 22 or newer, then:
