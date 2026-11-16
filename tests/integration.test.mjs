@@ -1,0 +1,57 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import os from 'node:os';
+import { once } from 'node:events';
+import http from 'node:http';
+import { fileURLToPath } from 'node:url';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { Vault } from '../src/vault.mjs';
+import { Graph } from '../src/graph.mjs';
+import { Context } from '../src/context.mjs';
+import { createServer } from '../src/server.mjs';
+import { createProtocol } from '../src/mcp.mjs';
+import { estimateTokens } from '../src/context.mjs';
+async function setup(t) { const root = await fs.mkdtemp(path.join(os.tmpdir(), 'mastermind-integration-')); t.after(() => fs.rm(root, { recursive: true, force: true })); const vault = await new Vault(root).init(), graph = new Graph(vault), context = new Context(vault, graph); return { root, vault, graph, context }; }
+test('HTTP CRUD, actual disk persistence, graph and protection boundaries', async t => {
+  const { root, vault, graph, context } = await setup(t), server = createServer(vault, graph, context); server.listen(0, '127.0.0.1'); await once(server, 'listening'); t.after(() => new Promise(resolve => server.close(resolve)));
+  const base = `http://127.0.0.1:${server.address().port}`, headers = { 'Content-Type': 'application/json', 'X-Mastermind': 'local' };
+  assert.equal((await fetch(base)).status, 200); assert.equal((await fetch(base + '/vendor/marked.js')).status, 200);
+  assert.equal((await fetch(base + '/api/status', { headers: { Origin: 'https://evil.invalid' } })).status, 403);
+  const badHost = await new Promise((resolve, reject) => { const r = http.get(base + '/api/status', { headers: { Host: 'evil.invalid' } }, response => { response.resume(); resolve(response.statusCode); }); r.on('error', reject); });
+  assert.equal(badHost, 403);
+  assert.equal((await fetch(base + '/api/note', { method: 'PUT', body: '{}' })).status, 403);
+  const created = await fetch(base + '/api/note', { method: 'PUT', headers, body: JSON.stringify({ path: 'real.md', content: '# Persistent\n[[Linked]]', expectedRevision: null }) }); assert.equal(created.status, 200); const note = await created.json();
+  assert.equal(await fs.readFile(path.join(root, 'real.md'), 'utf8'), note.content);
+  assert.equal((await fetch(base + '/api/note', { method: 'PUT', headers, body: JSON.stringify({ path: 'real.md', content: 'stale', expectedRevision: null }) })).status, 409);
+  assert.equal((await fetch(base + '/api/note?path=..%2Foutside.md')).status, 400);
+  const g = await (await fetch(base + '/api/graph')).json(); assert.equal(g.links[0].target, 'missing:Linked');
+  assert.ok((await (await fetch(base + '/api/mcp-config')).json()).mcpServers.mastermind.args.includes(await fs.realpath(root)));
+});
+test('MCP official SDK interoperability: handshake, discovery, context, writes, bounded reads, resources', async t => {
+  const { root, vault } = await setup(t); await vault.write('Knowledge.md', '# Redis\nCache TTL is 300 seconds.\n', null);
+  const client = new Client({ name: 'mastermind-integration-test', version: '1.0.0' }); const transport = new StdioClientTransport({ command: process.execPath, args: [fileURLToPath(new URL('../src/cli.mjs', import.meta.url)), 'mcp', '--vault', root, '--profile', 'full'], stderr: 'pipe' });
+  await client.connect(transport); t.after(() => client.close());
+  const listing = await client.listTools(); assert.ok(listing.tools.length >= 11); assert.ok(listing.tools.some(t=>t.name==='query_vault'));  assert.ok(listing.tools.some(t => t.name === 'get_context'));
+  const c = await client.callTool({ name: 'get_context', arguments: { query: 'Redis TTL', budget: 1000 } }); assert.match(c.content[0].text, /300 seconds/);
+  const compact = await client.callTool({ name: 'get_context', arguments: { query: 'Redis TTL', budget: 256 } }); assert.ok(estimateTokens(compact.content[0].text) <= 256);
+  const search = await client.callTool({ name: 'search_notes', arguments: { query: 'Redis', limit: 1 } }); assert.equal(JSON.parse(search.content[0].text)[0].id, 'Knowledge.md');
+  const listingNotes = await client.callTool({ name: 'list_notes', arguments: { limit: 1 } }); assert.equal(JSON.parse(listingNotes.content[0].text).notes[0].path, 'Knowledge.md');
+  const graphQuery = await client.callTool({ name: 'query_graph', arguments: { query: 'Redis' } }); assert.equal(JSON.parse(graphQuery.content[0].text).nodes[0].id, 'Knowledge.md');
+  const neighbors = await client.callTool({ name: 'get_backlinks', arguments: { path: 'Knowledge.md' } }); assert.equal(JSON.parse(neighbors.content[0].text).totalIncoming, 0);
+  const route = await client.callTool({ name: 'find_path', arguments: { from: 'Knowledge.md', to: 'Knowledge.md' } }); assert.deepEqual(JSON.parse(route.content[0].text).path, ['Knowledge.md']);
+  const n = await client.callTool({ name: 'read_note', arguments: { path: 'Knowledge.md', startLine: 2, endLine: 2 } }); const note = JSON.parse(n.content[0].text); assert.equal(note.content, 'Cache TTL is 300 seconds.');
+  const write = await client.callTool({ name: 'write_note', arguments: { path: 'Knowledge.md', content: '# Redis\nTTL 600 seconds', expectedRevision: note.revision } }); assert.ok(!write.isError);
+  assert.match((await vault.read('Knowledge.md')).content, /600/);
+  const stale = await client.callTool({ name: 'write_note', arguments: { path: 'Knowledge.md', content: 'stale', expectedRevision: note.revision } }); assert.equal(stale.isError, true);
+  const resources = await client.listResources(); assert.equal(resources.resources[0].uri, 'mastermind://guide'); assert.match((await client.readResource({ uri: 'mastermind://guide' })).contents[0].text, /get_context/);
+});
+test('MCP rejects malformed requests and invalid tool arguments, never replies to notifications', async t => {
+  const { vault, graph, context } = await setup(t), protocol = createProtocol(vault, graph, context);
+  assert.equal((await protocol([])).error.code, -32600); assert.equal((await protocol({ jsonrpc: '2.0', id: 1, method: 'tools/list' })).error.code, -32000);
+  await protocol({ jsonrpc: '2.0', id: 2, method: 'initialize', params: { protocolVersion: '2025-11-25' } }); assert.equal(await protocol({ jsonrpc: '2.0', method: 'notifications/initialized' }), null);
+  assert.equal((await protocol({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'get_context', arguments: { query: 'test', budget: -1 } } })).error.code, -32602);
+  assert.equal((await protocol({ jsonrpc: '2.0', id: 4, method: 'missing' })).error.code, -32601);
+});

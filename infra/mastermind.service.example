@@ -1,0 +1,30 @@
+# Linux/systemd template. Review paths, create user and install dependencies first.
+# This file is not installed or enabled by local setup.
+[Unit]
+Description=Mastermind private knowledge workspace
+After=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=mastermind
+Group=mastermind
+WorkingDirectory=/opt/mastermind
+ExecStart=/usr/bin/node /opt/mastermind/src/cli.mjs infra run --config /etc/mastermind/local.env
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+UMask=0077
+StateDirectory=mastermind
+StateDirectoryMode=0700
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/mastermind
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

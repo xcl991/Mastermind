@@ -1,0 +1,63 @@
+import { chromium } from 'playwright';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import os from 'node:os';
+import { once } from 'node:events';
+import { Vault } from '../src/vault.mjs';
+import { Graph } from '../src/graph.mjs';
+import { Context } from '../src/context.mjs';
+import { createServer } from '../src/server.mjs';
+if (process.argv.includes('--security')) { await import('./security-browser.mjs'); process.exit(0); }
+if (process.argv.includes('--features')) { await import('./features-browser.mjs'); process.exit(0); }
+const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'mastermind-browser-'));
+await fs.cp(new URL('../examples/vault/', import.meta.url), temp, { recursive: true });
+const vault = await new Vault(temp).init(), graph = new Graph(vault), server = createServer(vault, graph, new Context(vault, graph));
+server.listen(0, '127.0.0.1'); await once(server, 'listening');
+const browser = await chromium.launch({ executablePath: process.env.BROWSER_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true });
+try {
+  await fs.mkdir('test-results', { recursive: true });
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 } }), errors = [], external = [];
+  page.on('pageerror', e => errors.push(e.message));
+  page.on('request', r => { if (!r.url().startsWith('http://127.0.0.1:') && !r.url().startsWith('data:')) external.push(r.url()); });
+  await page.goto(`http://127.0.0.1:${server.address().port}`); await page.waitForSelector('#preview h1');
+  assert.match(await page.locator('#preview h1').textContent(), /clarity/);
+  await page.screenshot({ path: 'test-results/workspace.png', fullPage: true });
+  await page.getByRole('button', { name: 'Catatan baru', exact: true }).first().click(); await page.locator('#new-path').fill('Tests/Browser note.md'); await page.getByRole('button', { name: 'Buat catatan', exact: true }).last().click();
+  await page.locator('.cm-content').fill('# Browser note\n\nAutosave persistence verified. [[Welcome]]\n\n<script>window.__xss = true</script>\n<img src=x onerror="window.__xss = true">');
+  await page.waitForFunction(() => document.querySelector('#save-status').textContent === 'Tersimpan di perangkat');
+  assert.match(await fs.readFile(path.join(temp, 'Tests/Browser note.md'), 'utf8'), /Autosave persistence/);
+  assert.equal(await page.evaluate(() => window.__xss), undefined); await page.screenshot({path:'test-results/editor.png',fullPage:true});
+  await page.getByRole('button', { name: 'Mode baca', exact: true }).click(); await page.locator('#preview [data-wiki="Welcome"]').click(); await page.waitForFunction(() => document.querySelector('#note-path').textContent === 'Welcome.md');
+  assert.match(await page.locator('#backlinks').textContent(), /Browser note/);
+  await page.locator('[data-view="graph"]').click(); await page.waitForFunction(() => document.querySelector('#graph-stats').textContent.includes('nodes'));
+  await page.locator('#graph-filter').selectOption('note'); await page.locator('#graph-search').fill('Browser note'); await page.waitForFunction(()=>/^1\//.test(document.querySelector('#graph-stats').textContent));assert.match(await page.locator('#graph-stats').textContent(), /^1\//);
+  await page.locator('#graph-search').fill(''); await page.locator('#graph-filter').selectOption('all'); await page.waitForTimeout(1600); await page.screenshot({ path: 'test-results/graph.png', fullPage: true });
+  await page.locator('#graph-file').setInputFiles({ name: 'graph.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ graph: { schema_version: 1 }, nodes: [{ id: 'test', label: 'Imported evidence' }], links: [] })) });
+  await page.waitForFunction(() => document.querySelector('#toast').textContent.includes('diimpor')); assert.ok((await graph.imported()).nodes.some(n => n.id === 'test'));
+  await page.locator('[data-view="context"]').click(); await page.locator('#context-query').fill('caching token'); await page.getByRole('button', { name: 'Ambil konteks' }).click(); await page.waitForFunction(() => document.querySelector('#context-tokens').textContent !== '—'); assert.match(await page.locator('#context-output').textContent(), /Token-efficient workflow.md/); await page.screenshot({ path: 'test-results/context.png', fullPage: true });
+  await page.locator('#connect').click(); await page.waitForSelector('#mcp-config'); assert.match(await page.locator('#mcp-config').textContent(), /mcpServers/); await page.getByRole('button', { name: 'Tutup', exact: true }).filter({ visible: true }).click();
+  // Real editor conflict, retained draft, history and trash recovery.
+  await page.locator('[data-view="notes"]').click();
+  await page.locator('.file-item').filter({ hasText: 'Browser note' }).click();
+  await page.getByRole('button', {name: 'Mode edit', exact: true}).click();
+  await fs.writeFile(path.join(temp, 'Tests/Browser note.md'), '# External disk version\n');
+  await page.locator('.cm-content').fill('# Retained browser draft\nUser text must survive.');
+  await page.waitForSelector('#conflict-dialog[open]');
+  assert.match(await fs.readFile(path.join(temp,'Tests/Browser note.md'),'utf8'), /External disk version/);
+  await page.locator('#conflict-copy').click();
+  await page.waitForFunction(() => document.querySelector('#note-path').textContent.includes('-draft-'));
+  assert.match(await page.locator('.cm-content').textContent(), /User text must survive/);
+  await page.locator('.cm-content').fill('# Second version\nUpdated draft.');
+  await page.waitForFunction(() => document.querySelector('#save-status').textContent === 'Tersimpan di perangkat');
+  await page.locator('#show-history').click(); await page.locator('#recovery-list button').first().click();
+  await page.waitForSelector('#history-dialog[open]'); assert.match(await page.locator('#history-preview').textContent(), /User text must survive/);
+  await page.locator('#restore-history').click(); await page.waitForFunction(() => document.querySelector('#editor').value.includes('User text must survive'));
+  await page.locator('#delete-note').click(); await page.locator('#confirm-trash').click();
+  await page.waitForFunction(() => !document.querySelector('#trash-dialog').open);
+  await page.locator('#show-trash').click(); await page.locator('#recovery-list button').first().click();
+  await page.waitForFunction(() => !document.querySelector('#recovery-dialog').open);
+  assert.ok((await vault.list()).some(n=>n.id.includes('-draft-')));
+  await page.setViewportSize({ width: 390, height: 844 }); await page.locator('#menu').click(); await page.locator('[data-view="notes"]').click(); await page.waitForTimeout(200); assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false); await page.screenshot({ path: 'test-results/mobile.png', fullPage: true });
+  assert.deepEqual(errors, []); assert.deepEqual(external, []); console.log(JSON.stringify({ passed: true, workflows: ['load', 'create', 'autosave', 'disk persistence', 'sanitized preview', 'wikilink navigation', 'backlinks', 'graph filter', 'graph JSON import', 'budgeted context', 'MCP config', 'mobile viewport', 'external edit conflict', 'draft copy', 'history restore', 'trash restore'], pageErrors: errors, externalRequests: external }, null, 2));
+} finally { await browser.close(); await new Promise(resolve => server.close(resolve)); await fs.rm(temp, { recursive: true, force: true }); }

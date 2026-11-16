@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "research-workspace",
+  "name": "Research workspace",
+  "version": "1.0.0",
+  "description": "Query proyek aktif dan template catatan sumber untuk riset yang dapat ditelusuri.",
+  "commands": [
+    { "id": "active-projects", "name": "Proyek aktif", "type": "query", "query": "TABLE status, priority FROM #project WHERE status != \"done\" SORT priority DESC LIMIT 50" },
+    { "id": "source-note", "name": "Catatan sumber", "type": "template", "template": "---\ntitle: {{title}}\ntags: [source]\ncreated: {{date}}\n---\n# {{title}}\n\n## Sumber\n\n## Fakta dan kutipan\n\n## Pertanyaan terbuka\n\n" }
+  ]
+}

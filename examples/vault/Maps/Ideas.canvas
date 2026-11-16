@@ -1,0 +1,1 @@
+{"nodes":[{"id":"source","type":"text","text":"Bukti sumber\nPath + baris + revision","x":0,"y":0,"width":260,"height":150},{"id":"finding","type":"text","text":"Finding yang bisa dipakai ulang\nPeriksa sumber sebelum digunakan","x":360,"y":0,"width":280,"height":150}],"edges":[{"id":"evidence","fromNode":"source","toNode":"finding","label":"supports"}]}

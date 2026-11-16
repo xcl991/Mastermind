@@ -1,0 +1,14 @@
+import {zipSync} from 'fflate';
+import {createHash} from 'node:crypto';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {releaseFiles} from './release-files.mjs';
+const root=fileURLToPath(new URL('../',import.meta.url)),files=await releaseFiles(root);
+await fs.mkdir(path.join(root,'artifacts'),{recursive:true});
+await fs.writeFile(path.join(root,'artifacts/source-manifest.json'),JSON.stringify(files,null,2)+'\n');
+const pkg=JSON.parse(await fs.readFile(path.join(root,'package.json'),'utf8')),contents={};
+for(const file of files)contents['Mastermind/'+file]=new Uint8Array(await fs.readFile(path.join(root,file)));
+const zip=zipSync(contents,{level:6}),archive=path.join(root,'artifacts',`mastermind-${pkg.version}.zip`),sha256=createHash('sha256').update(zip).digest('hex');
+await fs.writeFile(archive,zip);await fs.writeFile(archive+'.sha256',sha256+'  '+path.basename(archive)+'\n');
+console.log(JSON.stringify({archive,files:files.length,bytes:zip.length,sha256}));
