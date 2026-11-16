@@ -6,9 +6,11 @@ Mastermind indexes and retrieves locally. It requires no model API key, embeddin
 
 ## Meet Mastermind
 
-[![Watch the Mastermind film — Think clearly. Build with context.](docs/media/mastermind-poster.png)](https://github.com/xcl991/Mastermind/blob/main/docs/media/mastermind-film-1080p.mp4)
+[![Mastermind animated preview — click to play the full film with sound](docs/media/mastermind-preview.gif)](https://xcl991.github.io/Mastermind/)
 
-**[Watch the 48-second film](https://github.com/xcl991/Mastermind/blob/main/docs/media/mastermind-film-1080p.mp4)** · [Download MP4](https://raw.githubusercontent.com/xcl991/Mastermind/main/docs/media/mastermind-film-1080p.mp4) · Full English · 1080p
+**[▶ Play the full film with sound](https://xcl991.github.io/Mastermind/)** · [Download MP4](https://raw.githubusercontent.com/xcl991/Mastermind/main/docs/media/mastermind-film-1080p.mp4) · 48 seconds · Full English · 1080p
+
+The animated preview plays here; click it to open the full video player with sound, seeking, and chapters.
 
 From connected notes and knowledge graphs to focused evidence for compatible AI agents, see how Mastermind turns local knowledge into useful context.
 

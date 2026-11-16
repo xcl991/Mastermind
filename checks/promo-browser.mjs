@@ -1,0 +1,33 @@
+import {chromium} from 'playwright';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+const root=new URL('../',import.meta.url);
+const target=process.env.PLAYER_URL || new URL('docs/index.html',root).href;
+await fs.mkdir(new URL('artifacts/promo-player/',root),{recursive:true});
+const browser=await chromium.launch({executablePath:process.env.BROWSER_PATH || (process.platform==='darwin' ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' : undefined),headless:true});
+try{
+ const page=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[];
+ page.on('pageerror',e=>errors.push(e.message));
+ await page.goto(target);
+ page.setDefaultTimeout(20000);
+ await page.waitForFunction(()=>document.querySelector('#film').readyState>=1 || document.querySelector('#film').error);
+ assert.equal(await page.locator('#film').evaluate(v=>v.error?.message || null),null);
+ const media=await page.locator('#film').evaluate(v=>({duration:v.duration,width:v.videoWidth,height:v.videoHeight}));
+ assert.equal(media.duration,48);assert.equal(media.width,1920);assert.equal(media.height,1080);
+ await page.locator('#film').evaluate(v=>{v.muted=true});
+ await page.locator('[data-time="24"]').click();await page.waitForTimeout(400);
+ await page.waitForFunction(()=>{const v=document.querySelector('#film');return !v.paused && v.currentTime>24.2 && v.getVideoPlaybackQuality().totalVideoFrames>0;});
+ const seekState=await page.locator('#film').evaluate(v=>({time:v.currentTime,paused:v.paused,seeking:v.seeking,ready:v.readyState,error:v.error?.message}));assert.ok(seekState.time>=24 && seekState.time<32);
+ assert.equal(await page.locator('[data-time="24"]').getAttribute('aria-current'),'true');
+ await page.locator('#speed').selectOption('1.5');assert.equal(await page.locator('#film').evaluate(v=>v.playbackRate),1.5);
+ await page.locator('#film').evaluate(v=>v.pause());
+ await page.locator('h1').click();await page.keyboard.press('ArrowLeft');
+ assert.ok(await page.locator('#film').evaluate(v=>v.currentTime<24));
+ await page.keyboard.press('Space');assert.equal(await page.locator('#film').evaluate(v=>v.paused),false);await page.keyboard.press('Space');
+ await page.setViewportSize({width:390,height:844});
+ assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+ assert.equal(await page.locator('nav button').count(),8);assert.deepEqual(errors,[]);
+ await page.screenshot({path:new URL('artifacts/promo-player/mobile.png',root).pathname,fullPage:true});
+ const result={passed:true,media,url:target,checks:['decoded frames and playback advancement','chapter seeking','active chapter','playback rate','keyboard seek','keyboard play/pause','mobile layout','eight chapters'],pageErrors:errors};
+ await fs.writeFile(new URL('artifacts/promo-player/validation.json',root),JSON.stringify(result,null,2)+'\n');console.log(JSON.stringify(result));
+}finally{await browser.close();}
